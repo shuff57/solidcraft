@@ -114,6 +114,8 @@ pub enum Kind {
     OffsetPlane {
         offset: String,
     },
+    /// Halfway between two planes or planar faces.
+    Midplane,
     /// A construction plane through an axis at an angle to a plane.
     AnglePlane {
         angle: String,
@@ -521,6 +523,10 @@ impl Dialog {
             "construct.plane.offset" => {
                 Dialog::new(Kind::OffsetPlane { offset: "10 mm".into() }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
             }
+            "construct.plane.midplane" => Dialog::new(
+                Kind::Midplane,
+                vec![SelInput::new("First plane", PLANES | PLANAR_FACES, false), SelInput::new("Second plane", PLANES | PLANAR_FACES, false)],
+            ),
             "construct.plane.along_path" => {
                 Dialog::new(Kind::PathPlane { t: "0.5".into(), sketch: None }, vec![SelInput::new("Path", CURVES | EDGES, false)])
             }
@@ -790,6 +796,7 @@ impl Dialog {
                 | Kind::Loft { .. }
                 | Kind::Sweep { .. }
                 | Kind::PathPlane { .. }
+                | Kind::Midplane
                 | Kind::Move { .. }
                 | Kind::Hole { .. }
                 | Kind::Primitive { .. }
@@ -1379,6 +1386,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Measure { .. } => "MEASURE",
         Kind::Material { .. } => "PHYSICAL MATERIAL",
         Kind::OffsetPlane { .. } => "OFFSET PLANE",
+        Kind::Midplane => "MIDPLANE",
         Kind::PathPlane { .. } => "PLANE ALONG PATH",
         Kind::Rib { web: false, .. } => "RIB",
         Kind::Rib { web: true, .. } => "WEB",
@@ -2686,7 +2694,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         enter |= field(ui, t);
                         ui.end_row();
                     }
-                    Kind::Split | Kind::ReplaceFace | Kind::Remove => {}
+                    Kind::Split | Kind::ReplaceFace | Kind::Remove | Kind::Midplane => {}
                     Kind::Rib { thickness, depth, flip, .. } => {
                         row_label(ui, "Thickness");
                         enter |= field(ui, thickness);
@@ -3897,14 +3905,15 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::OffsetPlane { offset } => {
             need(0, "a plane")?;
-            let base = match sels(d, 0).first() {
-                Some(Sel::Plane { name }) => json!(name),
-                Some(face @ Sel::Face { .. }) => {
-                    crate::sketch_attachment_ui::face_plane(app, face).ok_or("the picked face is no longer in the model")?
-                }
-                _ => return Err("pick an origin or construction plane, or a planar face".into()),
-            };
+            let base = plane_arg(app, sels(d, 0).first())?;
             ("construct.plane.offset", json!({"base": base, "offset": offset}))
+        }
+        Kind::Midplane => {
+            need(0, "the first plane")?;
+            need(1, "the second plane")?;
+            let a = plane_arg(app, sels(d, 0).first())?;
+            let b = plane_arg(app, sels(d, 1).first())?;
+            ("construct.plane.midplane", json!({"a": a, "b": b}))
         }
         Kind::PathPlane { t, sketch } => {
             need(0, "a path")?;
@@ -4495,6 +4504,24 @@ fn emboss_face_sel(s: &Session, component: u64, face: &solidcraft_engine::doc::E
     Some(Sel::Face { body: world_name, index, point })
 }
 
+/// A picked plane or planar face as `construct.plane.*` takes it.
+fn plane_arg(app: &SolveApp, sel: Option<&Sel>) -> Result<Value, String> {
+    match sel {
+        Some(Sel::Plane { name }) => Ok(json!(name)),
+        Some(face @ Sel::Face { .. }) => crate::sketch_attachment_ui::face_plane(app, face).ok_or("the picked face is no longer in the model".into()),
+        _ => Err("pick an origin or construction plane, or a planar face".into()),
+    }
+}
+
+/// A stored construction reference back into a dialog pick.
+fn geo_sel(s: &Session, g: &solidcraft_engine::doc::construct::GeoRef) -> Option<Sel> {
+    match g {
+        solidcraft_engine::doc::construct::GeoRef::Plane { plane } => plane_sel(s, plane),
+        solidcraft_engine::doc::construct::GeoRef::Face { at, .. } => face_sel(s, *at),
+        _ => None,
+    }
+}
+
 pub(crate) fn plane_sel(s: &Session, pl: &PlaneRef) -> Option<Sel> {
     match pl {
         PlaneRef::Origin { name } => Some(Sel::Plane { name: name.clone() }),
@@ -5019,6 +5046,16 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d.kind = Kind::PathPlane { t: t.to_string(), sketch };
             if let Some(input) = d.inputs.first_mut() {
                 input.items = vec![item];
+            }
+            d
+        }
+        FeatureKind::ConstructionPlane { plane: PlaneRef::Midplane { a, b } } => {
+            let mut d = start("construct.plane.midplane")?;
+            if let Some(inp) = d.inputs.first_mut() {
+                inp.items = geo_sel(s, a).into_iter().collect();
+            }
+            if let Some(inp) = d.inputs.get_mut(1) {
+                inp.items = geo_sel(s, b).into_iter().collect();
             }
             d
         }
