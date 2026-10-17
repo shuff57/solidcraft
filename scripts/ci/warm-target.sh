@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # Self-hosted runner only: keep a job's Cargo build directory between runs, outside the
-# checkout (actions/checkout's clean would delete it). Usage: warm-target.sh NAME [--link]
-#   default  sets CARGO_TARGET_DIR for the rest of the job
-#   --link   links ./target to it instead, for jobs whose test binaries must keep
-#            checkout-relative paths (env!("CARGO_BIN_EXE_*") in the nextest archive)
-# Each self-hosted runner has its own /home/runner/work, so two never share a directory.
+# checkout (actions/checkout's clean would delete it), and point CARGO_TARGET_DIR at it for the
+# rest of the job. Usage: warm-target.sh NAME
+# Each self-hosted runner has its own /home/runner, so two never share a directory.
 set -euo pipefail
-name=${1:?usage: warm-target.sh NAME [--link]}
+name=${1:?usage: warm-target.sh NAME}
 dir=/home/runner/work/cargo-target/$name
 # Start over when it has grown past 40 GB: old dependency versions pile up.
 if [ -d "$dir" ] && [ "$(du -sm "$dir" | cut -f1)" -gt 40000 ]; then
@@ -14,10 +12,5 @@ if [ -d "$dir" ] && [ "$(du -sm "$dir" | cut -f1)" -gt 40000 ]; then
   rm -rf "$dir"
 fi
 mkdir -p "$dir"
-if [ "${2:-}" = --link ]; then
-  rm -rf target
-  ln -s "$dir" target
-else
-  echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
-fi
+echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
 echo "warm-target: $dir ($(du -sh "$dir" | cut -f1))"

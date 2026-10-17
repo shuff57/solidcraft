@@ -8,12 +8,13 @@
 # Tests are built once and run in 4 shards. A few heavy tests (see .config/nextest.toml) are
 # skipped on pull requests and run on pushes to main and nightly.
 # Cross-compilation is opt-in through Run workflow; release builds remain in release.yml.
-# Pushes to main and merge-queue groups use both pools: Clippy, the test build, the doc tests
-# and test shards 1-2 run on the self-hosted runner (`self-hosted-fast`, warm build directories
-# via scripts/ci/warm-target.sh), everything else on GitHub's runners. Pull requests, the
-# nightly run and Run workflow use GitHub's runners only; the self-hosted runner refuses any
-# job that isn't a push to main or a merge-queue group. Both pools check out at
-# /home/runner/work, so either can run the other's test archive.
+# Pushes to main and merge-queue groups use both pools: Clippy, the doc tests and test shards
+# 1-2 run on the self-hosted runner (`self-hosted-fast`, warm build directories via
+# scripts/ci/warm-target.sh), everything else on GitHub's runners. The test archive is built on
+# GitHub's runners: the self-hosted machine has a newer glibc, so its binaries wouldn't start
+# on ubuntu-24.04, while the archive runs there unchanged (same /home/runner/work checkout
+# path). Pull requests, the nightly run and Run workflow use GitHub's runners only; the
+# self-hosted runner refuses any job that isn't a push to main or a merge-queue group.
 name: CI
 
 on:
@@ -169,7 +170,7 @@ jobs:
     name: Build tests
     needs: changes
     if: needs.changes.outputs.native == 'true'
-    runs-on: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.ref == 'refs/heads/ci-selfhosted-test') && 'self-hosted-fast' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
@@ -178,13 +179,8 @@ jobs:
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Warm build directory (self-hosted runner)
-        if: runner.environment == 'self-hosted'
-        run: scripts/ci/warm-target.sh build-tests --link
       - uses: dtolnay/rust-toolchain@stable
-      # The self-hosted runner keeps its build directory and Cargo home instead.
-      - if: runner.environment == 'github-hosted'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-tests
       - name: Set up compiler cache
