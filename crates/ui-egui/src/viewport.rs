@@ -370,6 +370,8 @@ pub struct Proj {
 
 impl Proj {
     pub fn to_screen(&self, p: Vec3) -> Option<Pos2> {
+        // reSHape local patch: a surface sketch is drawn on its face.
+        let p = solidcraft_engine::cmd::wrap_sketch::warp_point(p).unwrap_or(p);
         let c = self.vp.apply(p);
         if c[3] <= 1e-9 {
             return None;
@@ -601,6 +603,8 @@ fn base_scene_key(app: &SolveApp) -> u64 {
         seam.order.hash(&mut h);
         seam.points.first().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).hash(&mut h);
     }
+    // reSHape local patch: the wrapped-sketch overlay.
+    solidcraft_engine::cmd::wrap_sketch::generation().hash(&mut h);
     // So are the faces Isocurve Analysis shows (their curves follow the bodies, hashed above).
     for pick in &app.session.isocurves {
         pick.body.hash(&mut h);
@@ -1940,7 +1944,15 @@ pub(crate) fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
                 let wd = 0.7 + 0.3 * line.major;
                 for (s0, s1, alpha) in fade.pieces(t) {
                     let col = sc.color(grid_colour(col, alpha * line.weight));
-                    sc.under_line(w3(c + across * t + along * s0), w3(c + across * t + along * s1), col, wd);
+                    // reSHape local patch: a surface sketch's grid lies on its face.
+                    match &sketch_plane {
+                        Some(pl) if solidcraft_engine::cmd::wrap_sketch::warps(pl) => {
+                            for (a, b) in solidcraft_engine::cmd::wrap_sketch::warp_pieces(pl, c + across * t + along * s0, c + across * t + along * s1, 1.0) {
+                                sc.line(a.to_f32(), b.to_f32(), col, wd, false);
+                            }
+                        }
+                        _ => sc.under_line(w3(c + across * t + along * s0), w3(c + across * t + along * s1), col, wd),
+                    }
                 }
             }
         }
@@ -1976,7 +1988,34 @@ pub(crate) fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
                 cached = crate::sketch_display::profile_region(app, sid, index, &ss.plane, proj);
                 cached.as_ref()
             };
+            let warped = solidcraft_engine::cmd::wrap_sketch::warps(&ss.plane);
             for tri in display.as_ref().map_or_else(Vec::new, |region| crate::sketch_display::fill_triangles(region, &mut fill_budget)) {
+                if warped {
+                    // reSHape local patch: a surface sketch's fill lies on its face, in small pieces.
+                    let [a, b, c] = tri;
+                    let k = ((a.dist(b).max(b.dist(c)).max(c.dist(a)) / 1.0).ceil() as usize).clamp(1, 24);
+                    let at = |i: usize, j: usize| {
+                        let q = a + (b - a) * (i as f64 / k as f64) + (c - a) * (j as f64 / k as f64);
+                        let w = ss.plane.to_world(q);
+                        solidcraft_engine::cmd::wrap_sketch::warp_point(w)
+                    };
+                    for i in 0..k {
+                        for j in 0..k - i {
+                            let mut cells = vec![[(i, j), (i + 1, j), (i, j + 1)]];
+                            if i + j + 1 < k {
+                                cells.push([(i + 1, j), (i + 1, j + 1), (i, j + 1)]);
+                            }
+                            for cell in cells {
+                                if let [Some(p), Some(q), Some(r)] = cell.map(|(i, j)| at(i, j)) {
+                                    for v in [p, q, r] {
+                                        sc.trans_tri(v.to_f32(), [0.0; 3], profile_fill);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
                 for q in tri {
                     sc.trans_tri((ss.plane.to_world(q) + lift).to_f32(), [0.0; 3], profile_fill);
                 }
@@ -2012,6 +2051,12 @@ pub(crate) fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
         // can opt into the same behaviour in Preferences.
         let through = active || app.preferences.reference_geometry_through_bodies;
         let halo = sc.color(c4(tk.sketch_halo));
+        // reSHape local patch: a surface sketch's curves lie on its face.
+        if solidcraft_engine::cmd::wrap_sketch::warps(&ss.plane) {
+            for stroke in strokes.iter_mut() {
+                stroke.0 = stroke.0.iter().flat_map(|(a, b)| solidcraft_engine::cmd::wrap_sketch::warp_pieces(&ss.plane, *a, *b, 0.5)).collect();
+            }
+        }
         for (segs, _, width, _) in strokes.iter().filter(|stroke| stroke.3) {
             for (a, b) in segs {
                 sc.line(a.to_f32(), b.to_f32(), halo, width + SKETCH_HALO_WIDTH, through);
@@ -5018,7 +5063,7 @@ pub fn sketch_point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec2, 
         }
     }
     let (o, d) = proj.ray(pos);
-    let w = ss.plane.intersect_ray(o, d)?;
+    let w = solidcraft_engine::cmd::wrap_sketch::intersect_ray(&ss.plane, o, d)?;
     let lp = ss.plane.to_local(w);
     if crate::drag_snap::suppressed() {
         return Some((lp, None));
@@ -5455,7 +5500,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let state = crate::open_meshing::shown_world(app);
                     if let Some(sketch) = app.session.active_sketch.and_then(|id| state.sketch(id)) {
                         let (origin, direction) = proj.ray(p);
-                        if let Some(point) = sketch.plane.intersect_ray(origin, direction) {
+                        if let Some(point) = solidcraft_engine::cmd::wrap_sketch::intersect_ray(&sketch.plane, origin, direction) {
                             crate::sketch_modify_ui::pick_position(&mut dialog, &app.session, point);
                         }
                     }
@@ -5574,7 +5619,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let on_plane = |app: &SolveApp, p: Pos2| {
             let ss = app.session.active_sketch.and_then(|sid| crate::open_meshing::shown_world(app).sketch(sid).cloned())?;
             let (o, d) = proj.ray(p);
-            ss.plane.intersect_ray(o, d).map(|w| ss.plane.to_local(w))
+            solidcraft_engine::cmd::wrap_sketch::intersect_ray(&ss.plane, o, d).map(|w| ss.plane.to_local(w))
         };
         // What a drag starts on: the 3D triad, then a dimension's text, then sketch geometry
         // (before the dimension's lines, which end on the geometry they measure), as for clicks.

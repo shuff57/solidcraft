@@ -455,7 +455,7 @@ impl Tracking {
             return;
         }
         let (ray, direction) = proj.ray(cursor);
-        let Some(world) = plane.intersect_ray(ray, direction) else { return };
+        let Some(world) = solidcraft_engine::cmd::wrap_sketch::intersect_ray(&plane, ray, direction) else { return };
         let at = plane.to_local(world);
         if !at.x.is_finite() || !at.y.is_finite() {
             return;

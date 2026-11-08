@@ -57,6 +57,8 @@ pub mod dialogs_surface;
 pub mod dialogs_sweep;
 mod dialogs_thread;
 pub mod dialogs_view_dxf;
+/// reSHape local patch: Wrap Sketch.
+pub mod dialogs_wrap;
 pub mod dim_view;
 #[cfg(test)]
 mod dimension_create_ui_tests;
@@ -3314,6 +3316,7 @@ impl SolveApp {
             resume_ui::after_long_pause(ctx);
         }
         frame_watch::begin(self);
+        dialogs_wrap::poll(self, ctx);
         refused_part::next_frame(self, ctx);
         gpu::tick_tessellation(self);
         file_picker::tick(self, ctx);

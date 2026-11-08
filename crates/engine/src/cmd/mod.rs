@@ -148,6 +148,8 @@ mod surface_analysis;
 mod surface_boundary;
 mod surface_match;
 mod view_dxf;
+/// reSHape local patch: Wrap Sketch's ribbon entry.
+pub mod wrap_sketch;
 mod view_navigation;
 
 use serde::Serialize;
@@ -391,6 +393,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(section::COMMANDS.iter());
     v.extend(view_navigation::COMMANDS.iter());
     v.extend(view_dxf::COMMANDS.iter());
+    v.extend(wrap_sketch::COMMANDS.iter());
     v.extend(settings::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());
     v.extend(render::COMMANDS.iter());

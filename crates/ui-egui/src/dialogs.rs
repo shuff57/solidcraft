@@ -415,6 +415,8 @@ crate::dialog_descriptor::dialog_descriptors! {
                 dashed: bool,
                 tolerance: f64,
             },
+            /// reSHape local patch: Wrap Sketch (`dialogs_wrap`).
+            Wrap(crate::dialogs_wrap::Wrap),
             /// Insert SVG / DXF: where the picked drawing goes (`dialogs_insert_drawing`).
             InsertDrawing(crate::dialogs_insert_drawing::Place),
             /// Plastic features (`dialogs_plastic`).
@@ -907,7 +909,8 @@ impl Dialog {
         let s = &app.session;
         let has_bodies = !crate::open_meshing::session_world(s).bodies.is_empty();
         let mut d = match id {
-            "sketch.create" => Dialog::new(Kind::Sketch, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)]),
+            // reSHape local patch: a curved face starts a surface sketch (`dialogs_wrap`).
+            "sketch.create" => Dialog::new(Kind::Sketch, vec![SelInput::new("Plane", PLANES | PLANAR_FACES | FACES, false)]),
             "sketch.intersect" => {
                 let bodies = s.selection.iter().any(|sel| matches!(sel, Sel::Body { .. }));
                 Dialog::new(
@@ -1152,6 +1155,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_save_mesh::start(app, id))
                     .or_else(|| crate::dialogs_view_dxf::start(app, id))
                     .or_else(|| crate::view_gizmo::start(app, id))
+                    .or_else(|| crate::dialogs_wrap::start(app, id))
                     .or_else(|| crate::dialogs_plastic::start(app, id))
                     .or_else(|| crate::dialogs_frame::start(app, id))
                     .or_else(|| crate::dialogs_end_cap::start(app, id))
@@ -2705,6 +2709,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::SaveMesh(_) => "SAVE AS MESH",
         Kind::ViewDxf { .. } => "Export Current View as DXF",
         Kind::ViewNavigator(_) => "CUSTOM VIEW NAVIGATOR",
+        Kind::Wrap(_) => "WRAP SKETCH",
         Kind::InsertDrawing(p) => crate::dialogs_insert_drawing::title(p),
         Kind::Plastic(k) => k.title(),
         Kind::Frame(_) => "FRAME MEMBER",
@@ -3873,6 +3878,7 @@ pub(crate) fn action_labels(kind: &Kind) -> (&'static str, &'static str) {
         Kind::ConfirmDelete { .. } => ("Delete", "Cancel"),
         Kind::SaveMesh(k) => (crate::dialogs_save_mesh::button(k), "Cancel"),
         Kind::ViewDxf { .. } => ("Export DXF…", "Cancel"),
+        Kind::Wrap(_) => ("Wrap", "Cancel"),
         _ => ("OK", "Cancel"),
     }
 }
@@ -4888,6 +4894,12 @@ fn hole_defaults(s: &Session) -> Kind {
 
 /// Start a sketch on a picked plane or planar face and turn the view to face it.
 pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
+    // reSHape local patch: on a curved face the sketch is a surface sketch.
+    if let Sel::Face { point, .. } = sel
+        && solidcraft_engine::cmd::wrap_sketch::face_is_planar(&app.session, *point) == Some(false)
+    {
+        return crate::dialogs_wrap::start_surface_sketch(app, sel);
+    }
     let mut params = match sel {
         Sel::Plane { name } => json!({ "plane": shown_origin_plane(app, name).unwrap_or_else(|| json!(name)) }),
         Sel::Face { .. } => json!({
@@ -5123,6 +5135,9 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
     }
     if let Kind::ViewNavigator(form) = &d.kind {
         return crate::view_gizmo::run_dialog(app, form, &d.inputs);
+    }
+    if let Kind::Wrap(w) = &d.kind {
+        return crate::dialogs_wrap::run(app, w, &d.inputs);
     }
     // Saving asks for a file name first; `Err("")` is the user backing out of that.
     if let Kind::SaveMesh(k) = &d.kind {
@@ -6310,6 +6325,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::SketchModify(k) => return crate::sketch_modify_ui::commands(app, k, &d.inputs, &d.extra),
         Kind::SaveMesh(k) => return crate::dialogs_save_mesh::commands(k, &d.inputs),
         Kind::ViewDxf { .. } | Kind::ViewNavigator(_) => return Ok(Vec::new()),
+        Kind::Wrap(_) => return Ok(Vec::new()),
         Kind::InsertDrawing(p) => return crate::dialogs_insert_drawing::commands(p),
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Frame(k) => return crate::dialogs_frame::commands(app, k, &d.inputs, &d.extra),

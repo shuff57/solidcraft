@@ -20,6 +20,7 @@ pub fn projection_key(proj: &Proj, ppp: f32) -> u64 {
     for n in [proj.rect.left(), proj.rect.top(), proj.rect.width(), proj.rect.height(), ppp] {
         n.to_bits().hash(&mut h);
     }
+    solidcraft_engine::cmd::wrap_sketch::generation().hash(&mut h);
     h.finish()
 }
 
@@ -67,6 +68,7 @@ pub fn curve_with_budget(sketch: &Sketch, index: usize, plane: &Plane, proj: &Pr
         out.vertex_count += sampled.vertex_count;
         out.parts.extend(sampled.parts);
     }
+    solidcraft_engine::cmd::wrap_sketch::densify(plane, &mut out.parts, 0.5);
     budget.remaining_vertices -= initial.remaining_vertices - local.remaining_vertices;
     budget.remaining_nodes -= initial.remaining_nodes - local.remaining_nodes;
     out
@@ -83,6 +85,7 @@ pub fn curve_unclipped(sketch: &Sketch, index: usize, plane: &Plane, proj: &Proj
         out.vertex_count += sampled.vertex_count;
         out.parts.extend(sampled.parts);
     }
+    solidcraft_engine::cmd::wrap_sketch::densify(plane, &mut out.parts, 0.5);
     out
 }
 
